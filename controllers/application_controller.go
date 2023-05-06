@@ -20,7 +20,13 @@ package controllers
 
 import (
 	"context"
+	"fmt"
+	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -49,10 +55,36 @@ type ApplicationReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.14.1/pkg/reconcile
 func (r *ApplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = log.FromContext(ctx)
+	l := log.FromContext(ctx)
 
-	// TODO(user): your logic here
+	// get the Application
+	app := &appsv1.Application{}
+	if err := r.Get(ctx, req.NamespacedName, app); err != nil {
+		if errors.IsNotFound(err) {
+			l.Info("Application resource not found. Ignoring since object must be deleted")
+			return ctrl.Result{}, nil
+		}
+		l.Error(err, "Failed to get Application")
+		return ctrl.Result{RequeueAfter: 1 * time.Minute}, err
+	}
 
+	// create pods
+	for i := 0; i < int(app.Spec.Replicas); i++ {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      fmt.Sprintf("%s-%d", app.Name, i),
+				Namespace: app.Namespace,
+				Labels:    app.Labels,
+			},
+			Spec: app.Spec.Template.Spec,
+		}
+		if err := r.Create(ctx, pod); err != nil {
+			l.Error(err, "Failed to create Pod", "pod", pod)
+			return ctrl.Result{RequeueAfter: 1 * time.Minute}, err
+		}
+		l.Info(fmt.Sprintf("The pod %s is created", pod.Name))
+	}
+	l.Info("all pods are created")
 	return ctrl.Result{}, nil
 }
 
